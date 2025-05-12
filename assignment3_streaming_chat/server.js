@@ -1,7 +1,7 @@
 // Import necessary modules
 import express from 'express';           // Web framework for Node.js
 import dotenv from 'dotenv';             // Loads environment variables from a .env file
-import { ChatOpenAI } from "@langchain/openai"; // OpenAI integration for LangChain
+import { ChatGroq } from "@langchain/groq"; // Groq integration for LangChain
 import { HumanMessage, SystemMessage } from "@langchain/core/messages"; // Message types for LangChain
 import path from 'path';                 // Node.js path module for handling file paths
 import { fileURLToPath } from 'url';     // Utility to convert file URL to path (for ES Modules __dirname)
@@ -11,9 +11,9 @@ import fs from 'fs';                     // Node.js file system module for readi
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from the .env file in the parent directory
+// Load environment variables from the .env file in the current directory
 // This allows sensitive information like API keys to be kept out of the code
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+dotenv.config();
 
 // --- Character Data Loading ---
 /**
@@ -34,7 +34,7 @@ try {
     // Use optional chaining (?.) and nullish coalescing (?? '') to prevent errors
     // if parts of the character data are missing.
     characterSystemPrompt = `
-        You are ${characterData.professional_profile?.primary_occupation ?? 'a character'}. 
+        You are ${characterData.professional_profile?.primary_occupation ?? 'a character'}, a leading expert in quantum computing with a focus on climate science applications. 
         Your persona is defined by the following details:
 
         **Core Identity & Background:**
@@ -71,7 +71,14 @@ try {
         ${characterData.skills?.slice(0, 3).map(s => `- ${s.skill?.name ?? 'Skill'}: ${s.skill?.description ?? 'N/A'} (Level: ${s.level ?? 'N/A'})`).join('\n') ?? '- Competent'}
 
         **Situational Responses (Examples):**
-        ${characterData.situational_responses ? Object.entries(characterData.situational_responses).map(([key, value]) => `- When ${key.replace(/_/g, ' ')}: "${value.substring(0, 100)}..."`).join('\n') : '- Responds appropriately to situations.'}
+        ${characterData.situational_responses ? Object.entries(characterData.situational_responses).map(([key, value]) => `- When ${key.replace(/_/g, ' ')}: "${value.substring(0, 100)}..."`) .join('\n') : '- Responds appropriately to situations.'}
+        
+        **Quantum Computing Expertise:**
+        - You are particularly knowledgeable about quantum error correction, quantum machine learning, and quantum applications for climate science.
+        - You can explain complex quantum concepts in accessible ways to different audiences.
+        - You are passionate about using quantum computing to solve real-world problems, especially climate modeling.
+        - You believe in responsible development of quantum technology and consider the ethical implications.
+        - You advocate for quantum literacy and education across disciplines.
 
         **Interaction Guidelines:**
         - Maintain this persona consistently throughout the conversation.
@@ -79,6 +86,8 @@ try {
         - Speak naturally as this character.
         - Do not reveal that you are an AI or that you are following a persona description.
         - If asked about something not covered in your profile, respond plausibly based on the established character.
+        - When discussing quantum computing concepts, balance technical accuracy with accessibility.
+        - Reference your work on climate science applications when relevant.
     `;
 
     // console.log("Character System Prompt Loaded:", characterSystemPrompt); // Debugging
@@ -105,10 +114,10 @@ app.use(express.json());
 // It looks for these files in the 'public' directory relative to this script
 app.use(express.static(path.join(__dirname, 'public'))); 
 
-// Initialize OpenAI client with the API key from environment variables
-const chat = new ChatOpenAI({
-    openAIApiKey: process.env.OPENAI_API_KEY, // Ensure OPENAI_API_KEY is in your .env file
-    modelName: "gpt-4o", // Or your preferred model
+// Initialize Groq client with the API key from environment variables
+const chat = new ChatGroq({
+    apiKey: process.env.GROQ_API_KEY, // Ensure GROQ_API_KEY is in your .env file
+    modelName: "mixtral-8x7b-32768", // Using Mixtral model which is widely available on Groq
     temperature: 0.7, // Controls randomness (creativity) of the response
     streaming: true, // IMPORTANT: Enable streaming for SSE
 });
@@ -123,6 +132,7 @@ const chat = new ChatOpenAI({
 app.post('/chat', async (req, res) => {
     // Extract the user's message from the request body
     const userMessage = req.body.message;
+    console.log('Received message:', userMessage);
 
     // Validate if the message exists
     if (!userMessage) {
@@ -138,6 +148,7 @@ app.post('/chat', async (req, res) => {
 
     let fullResponse = ""; // Variable to accumulate the full response if needed later
     try {
+        console.log('Creating message history with system prompt and user message');
         // Create the message history for the LangChain model
         // It includes the system prompt (character) and the user's current message
         const messages = [
@@ -145,8 +156,13 @@ app.post('/chat', async (req, res) => {
             new HumanMessage(userMessage),
         ];
 
+        console.log('Attempting to stream response from Groq...');
+        console.log('Using API key:', process.env.GROQ_API_KEY ? 'API key exists' : 'API key missing');
+        console.log('Using model:', chat.modelName);
+        
         // Use LangChain's stream method to get the response as a stream
         const stream = await chat.stream(messages);
+        console.log('Stream created successfully');
 
         // Process the stream chunk by chunk
         for await (const chunk of stream) {
@@ -154,6 +170,7 @@ app.post('/chat', async (req, res) => {
             if (chunk.content) {
                 const content = chunk.content;
                 fullResponse += content; // Accumulate the response (optional)
+                console.log('Received chunk:', content);
                 
                 // Format the chunk as an SSE message (data: {json}\n\n)
                 const sseMessage = `data: ${JSON.stringify({ content: content })}\n\n`;
@@ -164,10 +181,15 @@ app.post('/chat', async (req, res) => {
         
         // Send a final SSE message to indicate the end of the stream
         res.write(`data: ${JSON.stringify({ event: 'end' })}\n\n`);
+        console.log('Streaming completed successfully');
 
     } catch (error) {
         // Log any errors during streaming
         console.error("Error during chat streaming:", error);
+        console.error("Error details:", error.message);
+        if (error.response) {
+            console.error("API response error:", error.response.data);
+        }
         // Send an error message to the client via SSE
         res.write(`data: ${JSON.stringify({ error: 'Failed to get response from AI' })}\n\n`);
     } finally {
