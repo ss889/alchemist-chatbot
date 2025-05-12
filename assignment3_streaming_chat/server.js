@@ -117,7 +117,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Initialize Groq client with the API key from environment variables
 const chat = new ChatGroq({
     apiKey: process.env.GROQ_API_KEY, // Ensure GROQ_API_KEY is in your .env file
-    modelName: "mixtral-8x7b-32768", // Using Mixtral model which is widely available on Groq
+    modelName: ""meta-llama/llama-4-scout-17b-16e-instruct"", // Using Mixtral model which is widely available on Groq
     temperature: 0.7, // Controls randomness (creativity) of the response
     streaming: true, // IMPORTANT: Enable streaming for SSE
 });
