@@ -121,7 +121,8 @@ console.log('API Key available:', process.env.GROQ_API_KEY ? 'Yes' : 'No');
 
 const chat = new ChatGroq({
     apiKey: process.env.GROQ_API_KEY, // Ensure GROQ_API_KEY is in your .env file
-    modelName: "llama3-8b-8192", // Using a simpler, definitely available model
+    model: "llama3-8b-8192", // Using a model that's definitely available on Groq
+    modelName: "llama3-8b-8192", // Also set modelName for compatibility
     temperature: 0.7, // Controls randomness (creativity) of the response
     streaming: true, // IMPORTANT: Enable streaming for SSE
 });
