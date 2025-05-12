@@ -6,6 +6,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages"; // Messa
 import path from 'path';                 // Node.js path module for handling file paths
 import { fileURLToPath } from 'url';     // Utility to convert file URL to path (for ES Modules __dirname)
 import fs from 'fs';                     // Node.js file system module for reading files
+import fetch from 'node-fetch';          // For direct API calls if needed
 
 // Recreate __dirname functionality for ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -115,9 +116,12 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); 
 
 // Initialize Groq client with the API key from environment variables
+// Log the API key for debugging (will be masked in production)
+console.log('API Key available:', process.env.GROQ_API_KEY ? 'Yes' : 'No');
+
 const chat = new ChatGroq({
     apiKey: process.env.GROQ_API_KEY, // Ensure GROQ_API_KEY is in your .env file
-    modelName: "mixtral-8x7b-32768", // Using Mixtral model which is widely available on Groq
+    modelName: "meta-llama/llama-4-scout-17b-16e-instruct", // Using the Llama 4 Scout model
     temperature: 0.7, // Controls randomness (creativity) of the response
     streaming: true, // IMPORTANT: Enable streaming for SSE
 });
@@ -149,33 +153,75 @@ app.post('/chat', async (req, res) => {
     let fullResponse = ""; // Variable to accumulate the full response if needed later
     try {
         console.log('Creating message history with system prompt and user message');
-        // Create the message history for the LangChain model
-        // It includes the system prompt (character) and the user's current message
-        const messages = [
-            new SystemMessage(characterSystemPrompt),
-            new HumanMessage(userMessage),
-        ];
-
-        console.log('Attempting to stream response from Groq...');
-        console.log('Using API key:', process.env.GROQ_API_KEY ? 'API key exists' : 'API key missing');
-        console.log('Using model:', chat.modelName);
         
-        // Use LangChain's stream method to get the response as a stream
-        const stream = await chat.stream(messages);
-        console.log('Stream created successfully');
-
-        // Process the stream chunk by chunk
-        for await (const chunk of stream) {
-            // Each chunk contains a piece of the AI's response content
-            if (chunk.content) {
-                const content = chunk.content;
-                fullResponse += content; // Accumulate the response (optional)
-                console.log('Received chunk:', content);
-                
-                // Format the chunk as an SSE message (data: {json}\n\n)
-                const sseMessage = `data: ${JSON.stringify({ content: content })}\n\n`;
-                // Write the formatted message to the response stream
-                res.write(sseMessage);
+        // Try a direct API call to Groq instead of using LangChain
+        const apiKey = process.env.GROQ_API_KEY;
+        console.log('API Key available:', apiKey ? 'Yes' : 'No');
+        
+        // Prepare the messages for the direct API call
+        const apiMessages = [
+            { role: "system", content: characterSystemPrompt },
+            { role: "user", content: userMessage }
+        ];
+        
+        // Make a direct API call to Groq
+        const apiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: apiMessages,
+                stream: true
+            })
+        });
+        
+        if (!apiResponse.ok) {
+            const errorData = await apiResponse.json();
+            console.error('Groq API error:', errorData);
+            throw new Error(`Groq API error: ${JSON.stringify(errorData)}`);
+        }
+        
+        console.log('Connected to Groq API, processing response stream...');
+        
+        // Process the response as a stream
+        const reader = apiResponse.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                console.log('Stream complete');
+                break;
+            }
+            
+            // Decode the chunk
+            const chunk = decoder.decode(value);
+            console.log('Raw chunk:', chunk);
+            
+            // Process the SSE format from Groq
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                    try {
+                        const jsonData = JSON.parse(line.substring(6));
+                        if (jsonData.choices && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
+                            const content = jsonData.choices[0].delta.content;
+                            fullResponse += content;
+                            console.log('Processed content:', content);
+                            
+                            // Send the content to the client
+                            const sseMessage = `data: ${JSON.stringify({ content })}\n\n`;
+                            res.write(sseMessage);
+                        }
+                    } catch (e) {
+                        console.error('Error parsing JSON from chunk:', e);
+                    }
+                } else if (line === 'data: [DONE]') {
+                    console.log('Received DONE signal from Groq');
+                }
             }
         }
         
