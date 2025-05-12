@@ -1,0 +1,5 @@
+theme: jekyll-theme-primer
+title: Alchemist Chatbot
+description: A collection of interactive AI chatbot projects
+baseurl: "/alchemist-chatbot"
+url: "https://ss889.github.io"
