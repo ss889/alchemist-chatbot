@@ -1,7 +1,7 @@
 {
   "name": "assignment3-streaming-chat",
   "version": "1.0.0",
-  "description": "LangChain streaming chat with OpenAI and Express",
+  "description": "LangChain streaming chat with Groq and Express",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
     "@langchain/groq": "^0.2.2",
     "@langchain/openai": "^0.0.28",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
   }
 }
