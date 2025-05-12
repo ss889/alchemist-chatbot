@@ -121,7 +121,7 @@ console.log('API Key available:', process.env.GROQ_API_KEY ? 'Yes' : 'No');
 
 const chat = new ChatGroq({
     apiKey: process.env.GROQ_API_KEY, // Ensure GROQ_API_KEY is in your .env file
-    modelName: "meta-llama/llama-4-scout-17b-16e-instruct", // Using the Llama 4 Scout model
+    modelName: "llama3-8b-8192", // Using a simpler, definitely available model
     temperature: 0.7, // Controls randomness (creativity) of the response
     streaming: true, // IMPORTANT: Enable streaming for SSE
 });
@@ -172,56 +172,54 @@ app.post('/chat', async (req, res) => {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                model: 'llama3-8b-8192',
                 messages: apiMessages,
                 stream: true
             })
         });
         
         if (!apiResponse.ok) {
-            const errorData = await apiResponse.json();
-            console.error('Groq API error:', errorData);
-            throw new Error(`Groq API error: ${JSON.stringify(errorData)}`);
+            try {
+                const errorData = await apiResponse.json();
+                console.error('Groq API error:', errorData);
+                console.error('Status code:', apiResponse.status);
+                throw new Error(`Groq API error: ${JSON.stringify(errorData)}`);
+            } catch (parseError) {
+                console.error('Error parsing error response:', parseError);
+                console.error('Status code:', apiResponse.status);
+                console.error('Response text:', await apiResponse.text());
+                throw new Error(`Groq API error: Status ${apiResponse.status}`);
+            }
         }
         
         console.log('Connected to Groq API, processing response stream...');
         
-        // Process the response as a stream
-        const reader = apiResponse.body.getReader();
-        const decoder = new TextDecoder('utf-8');
+        // Process the response differently since getReader is not available
+        console.log('Processing response without streaming');
         
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                console.log('Stream complete');
-                break;
-            }
-            
-            // Decode the chunk
-            const chunk = decoder.decode(value);
-            console.log('Raw chunk:', chunk);
-            
-            // Process the SSE format from Groq
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                    try {
-                        const jsonData = JSON.parse(line.substring(6));
-                        if (jsonData.choices && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
-                            const content = jsonData.choices[0].delta.content;
-                            fullResponse += content;
-                            console.log('Processed content:', content);
-                            
-                            // Send the content to the client
-                            const sseMessage = `data: ${JSON.stringify({ content })}\n\n`;
-                            res.write(sseMessage);
-                        }
-                    } catch (e) {
-                        console.error('Error parsing JSON from chunk:', e);
-                    }
-                } else if (line === 'data: [DONE]') {
-                    console.log('Received DONE signal from Groq');
-                }
+        // Use the LangChain approach instead since direct streaming isn't working
+        console.log('Falling back to LangChain approach');
+        const messages = [
+            new SystemMessage(characterSystemPrompt),
+            new HumanMessage(userMessage),
+        ];
+
+        console.log('Creating stream with LangChain');
+        const stream = await chat.stream(messages);
+        console.log('Stream created successfully');
+
+        // Process the stream chunk by chunk
+        for await (const chunk of stream) {
+            // Each chunk contains a piece of the AI's response content
+            if (chunk.content) {
+                const content = chunk.content;
+                fullResponse += content; // Accumulate the response
+                console.log('Received chunk:', content);
+                
+                // Format the chunk as an SSE message
+                const sseMessage = `data: ${JSON.stringify({ content: content })}\n\n`;
+                // Write the formatted message to the response stream
+                res.write(sseMessage);
             }
         }
         
